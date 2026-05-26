@@ -86,6 +86,22 @@ class SensorReadingCreated(BaseModel):
 READINGS: List[Dict] = []
 
 
+def get_status_phrase(status_code: int) -> str:
+    """Lấy message HTTP status code"""
+    messages = {
+        200: "OK",
+        201: "Created",
+        400: "Bad Request",
+        401: "Unauthorized",
+        403: "Forbidden",
+        404: "Not Found",
+        422: "Unprocessable Entity",
+        429: "Too Many Requests",
+        500: "Internal Server Error",
+    }
+    return messages.get(status_code, "HTTP Error")
+
+
 def build_problem(
     *,
     status_code: int,
@@ -107,22 +123,15 @@ def build_problem(
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    if isinstance(exc.detail, dict):
-        problem = exc.detail
-    else:
-        problem = build_problem(
-            status_code=exc.status_code,
-            title=status.HTTP_STATUS_CODES.get(exc.status_code, "HTTP Error"),
-            detail=str(exc.detail),
-            instance=str(request.url.path),
-        )
-
-    problem.setdefault("status", exc.status_code)
-    problem.setdefault("title", status.HTTP_STATUS_CODES.get(exc.status_code, "HTTP Error"))
-    problem.setdefault("type", "about:blank")
-    problem.setdefault("detail", "Request failed")
-    problem.setdefault("instance", str(request.url.path))
-
+    # Xử lý problem details đơn giản, không dùng status.HTTP_STATUS_CODES
+    problem = {
+        "type": "about:blank",
+        "title": get_status_phrase(exc.status_code),
+        "status": exc.status_code,
+        "detail": str(exc.detail) if exc.detail else "No detail provided",
+        "instance": str(request.url.path),
+    }
+    
     return JSONResponse(
         status_code=exc.status_code,
         content=problem,
@@ -155,27 +164,13 @@ async def validation_exception_handler(
 
 def verify_bearer_token(authorization: Optional[str] = Header(default=None)) -> None:
     if not authorization:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=build_problem(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                title="Unauthorized",
-                detail="Missing Authorization header",
-                problem_type="https://smart-campus.local/problems/unauthorized",
-            ),
-        )
-
-    expected = f"Bearer {AUTH_TOKEN}"
-    if authorization != expected:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=build_problem(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                title="Unauthorized",
-                detail="Invalid bearer token",
-                problem_type="https://smart-campus.local/problems/unauthorized",
-            ),
-        )
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    
+    # Xử lý cả 2 định dạng: "Bearer token" hoặc "token"
+    token = authorization.replace("Bearer ", "")
+    
+    if token != AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid bearer token")
 
 
 def now_iso() -> str:
