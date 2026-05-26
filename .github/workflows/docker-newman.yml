@@ -2,7 +2,10 @@ name: Lab04 Docker and Newman Verification
 
 on:
   push:
+    branches: [ main, master ]
   pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   docker-newman:
@@ -28,27 +31,60 @@ jobs:
 
       - name: Run Docker container
         run: |
-          docker run -d --rm \
+          docker run -d \
             --name fit4110-iot-lab04 \
             -p 8000:8000 \
             --env-file .env.example \
             fit4110/iot-ingestion:lab04
+          echo "Container started, waiting for initialization..."
+          sleep 10
+
+      - name: Check container status
+        run: |
+          echo "Container status:"
+          docker ps -a | grep fit4110-iot-lab04 || true
+          echo ""
+          echo "Container logs:"
+          docker logs fit4110-iot-lab04 || true
 
       - name: Wait for service health
-        run: npx wait-on http://localhost:8000/health --timeout 60000
-        env:
-          NODE_TLS_REJECT_UNAUTHORIZED: 0
+        run: |
+          echo "Waiting for service to be ready..."
+          timeout=60
+          start_time=$(date +%s)
+          while [ $(($(date +%s) - start_time)) -lt $timeout ]; do
+            if curl -s -f http://localhost:8000/health; then
+              echo "✓ Service is ready!"
+              exit 0
+            fi
+            echo "Waiting... ($(($(date +%s) - start_time))s/$timeout s)"
+            sleep 3
+          done
+          echo "✗ Service failed to start within ${timeout} seconds"
+          echo "Final container logs:"
+          docker logs fit4110-iot-lab04
+          exit 1
 
       - name: Run Newman against Docker container
         run: npm run test:local
+        env:
+          NODE_TLS_REJECT_UNAUTHORIZED: 0
 
       - name: Show container logs on failure
         if: failure()
-        run: docker logs fit4110-iot-lab04 || true
+        run: |
+          echo "=== Container logs ==="
+          docker logs fit4110-iot-lab04 || true
+          echo "=== Container status ==="
+          docker ps -a | grep fit4110-iot-lab04 || true
 
       - name: Stop container
         if: always()
         run: docker stop fit4110-iot-lab04 || true
+
+      - name: Clean up container
+        if: always()
+        run: docker rm fit4110-iot-lab04 || true
 
       - name: Upload Newman reports
         if: always()
